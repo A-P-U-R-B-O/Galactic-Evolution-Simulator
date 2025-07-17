@@ -1,0 +1,6 @@
+numpy>=1.21
+matplotlib>=3.5
+streamlit>=1.18
+plotly>=5.0
+pytest>=6.0
+jupyter
