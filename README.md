@@ -57,7 +57,7 @@ galactic-evolution-simulator/
 **Requirements:** Python 3.8+, `numpy`, `matplotlib`, `streamlit`, `plotly`.
 
 ```bash
-git clone https://github.com/yourusername/galactic-evolution-simulator.git
+git clone https://github.com/A-P-U-R-B-O/galactic-evolution-simulator.git
 cd galactic-evolution-simulator
 pip install -e .
 ```
