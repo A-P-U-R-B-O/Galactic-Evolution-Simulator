@@ -1,0 +1,13 @@
+services:
+  - type: web
+    name: galactic-evolution-simulator
+    env: python
+    buildCommand: pip install -r requirements.txt
+    startCommand: streamlit run streamlit_app.py --server.port $PORT
+    envVars:
+      - key: PYTHONUNBUFFERED
+        value: "1"
+      - key: STREAMLIT_SERVER_HEADLESS
+        value: "true"
+    plan: free
+    autoDeploy: true
