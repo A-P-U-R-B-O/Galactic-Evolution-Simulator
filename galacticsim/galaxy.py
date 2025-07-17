@@ -5,6 +5,7 @@ class Galaxy:
     Represents a galaxy with stars, gas, and dark matter components.
     Supports initialization of spiral, elliptical, and custom galaxies,
     and holds particle data and ISM properties for simulation.
+    Now supports full 3D initialization.
     """
 
     def __init__(
@@ -65,19 +66,19 @@ class Galaxy:
 
         # ISM properties (toy model)
         self.gas_mass = np.sum(self.masses[self.types == "gas"]) if self.n_gas > 0 else 0.0
-        self.gas_density = self.gas_mass / (np.pi * (np.max(np.linalg.norm(self.positions, axis=1))**2))
+        self.gas_density = self.gas_mass / (4 / 3 * np.pi * (np.max(np.linalg.norm(self.positions, axis=1)) ** 3))
         self.gas_temperature = 1e4  # Kelvin
 
     def _init_spiral(self):
-        """Spiral galaxy: disk + bulge + dark matter halo + gas."""
+        """Spiral galaxy: disk + bulge + dark matter halo + gas. Now 3D."""
         positions = []
         velocities = []
         masses = []
         types = []
 
-        # Disk stars
+        # Disk stars (thin disk, z ~ Gaussian)
         n_disk = int(self.n_stars * (1 - self.bulge_fraction))
-        disk_pos, disk_vel = self._sample_exponential_disk(n_disk)
+        disk_pos, disk_vel = self._sample_exponential_disk_3d(n_disk, z_std=0.1 * self.disk_scale_length)
         positions.append(disk_pos)
         velocities.append(disk_vel)
         masses.append(np.ones(n_disk))
@@ -85,29 +86,32 @@ class Galaxy:
 
         # Bulge stars (spherical)
         n_bulge = self.n_stars - n_disk
-        bulge_pos = np.random.normal(0, self.disk_scale_length * 0.3, (n_bulge, 2))
-        bulge_vel = np.random.normal(0, self.velocity_dispersion, (n_bulge, 2))
+        bulge_pos = np.random.normal(0, self.disk_scale_length * 0.3, (n_bulge, 3))
+        bulge_vel = np.random.normal(0, self.velocity_dispersion, (n_bulge, 3))
         positions.append(bulge_pos)
         velocities.append(bulge_vel)
         masses.append(np.ones(n_bulge))
         types += ["star"] * n_bulge
 
-        # Gas particles (disk)
+        # Gas particles (disk, thin)
         if self.n_gas > 0:
-            gas_pos, gas_vel = self._sample_exponential_disk(self.n_gas, scale=1.2*self.disk_scale_length)
+            gas_pos, gas_vel = self._sample_exponential_disk_3d(self.n_gas, scale=1.2 * self.disk_scale_length, z_std=0.15 * self.disk_scale_length)
             positions.append(gas_pos)
             velocities.append(gas_vel)
             masses.append(np.full(self.n_gas, 0.5))  # Each gas cloud is less massive
             types += ["gas"] * self.n_gas
 
-        # Dark matter halo (isothermal sphere)
+        # Dark matter halo (spherical isothermal sphere)
         if self.n_dm > 0:
-            dm_radius = np.random.normal(self.disk_scale_length * 3, self.disk_scale_length, self.n_dm)
-            dm_theta = np.random.uniform(0, 2 * np.pi, self.n_dm)
-            dm_x = dm_radius * np.cos(dm_theta)
-            dm_y = dm_radius * np.sin(dm_theta)
-            dm_pos = np.column_stack([dm_x, dm_y])
-            dm_vel = np.random.normal(0, self.velocity_dispersion, (self.n_dm, 2))
+            dm_radius = np.abs(np.random.normal(self.disk_scale_length * 3, self.disk_scale_length, self.n_dm))
+            phi = np.random.uniform(0, 2 * np.pi, self.n_dm)
+            costheta = np.random.uniform(-1, 1, self.n_dm)
+            theta = np.arccos(costheta)
+            dm_x = dm_radius * np.sin(theta) * np.cos(phi)
+            dm_y = dm_radius * np.sin(theta) * np.sin(phi)
+            dm_z = dm_radius * np.cos(theta)
+            dm_pos = np.column_stack([dm_x, dm_y, dm_z])
+            dm_vel = np.random.normal(0, self.velocity_dispersion, (self.n_dm, 3))
             positions.append(dm_pos)
             velocities.append(dm_vel)
             masses.append(np.ones(self.n_dm) * 5.0)  # DM particles are more massive
@@ -119,22 +123,22 @@ class Galaxy:
         masses = np.concatenate(masses)
         types = np.array(types)
 
-        # Assign disk rotation
-        self._apply_disk_rotation(positions, velocities, types)
+        # Assign disk rotation (in-plane only)
+        self._apply_disk_rotation_3d(positions, velocities, types)
 
         return positions, velocities, masses, types
 
     def _init_elliptical(self):
-        """Elliptical galaxy: single spheroidal distribution, no disk."""
-        positions = np.random.normal(0, self.disk_scale_length, (self.n_stars, 2))
-        velocities = np.random.normal(0, self.velocity_dispersion, (self.n_stars, 2))
+        """Elliptical galaxy: single spheroidal distribution, no disk. Now 3D."""
+        positions = np.random.normal(0, self.disk_scale_length, (self.n_stars, 3))
+        velocities = np.random.normal(0, self.velocity_dispersion, (self.n_stars, 3))
         masses = np.ones(self.n_stars)
         types = np.array(["star"] * self.n_stars)
 
         # Gas (if present)
         if self.n_gas > 0:
-            gas_pos = np.random.normal(0, self.disk_scale_length, (self.n_gas, 2))
-            gas_vel = np.random.normal(0, self.velocity_dispersion, (self.n_gas, 2))
+            gas_pos = np.random.normal(0, self.disk_scale_length, (self.n_gas, 3))
+            gas_vel = np.random.normal(0, self.velocity_dispersion, (self.n_gas, 3))
             positions = np.vstack([positions, gas_pos])
             velocities = np.vstack([velocities, gas_vel])
             masses = np.concatenate([masses, np.full(self.n_gas, 0.5)])
@@ -142,12 +146,15 @@ class Galaxy:
 
         # Dark matter halo (if present)
         if self.n_dm > 0:
-            dm_radius = np.random.normal(self.disk_scale_length * 3, self.disk_scale_length, self.n_dm)
-            dm_theta = np.random.uniform(0, 2 * np.pi, self.n_dm)
-            dm_x = dm_radius * np.cos(dm_theta)
-            dm_y = dm_radius * np.sin(dm_theta)
-            dm_pos = np.column_stack([dm_x, dm_y])
-            dm_vel = np.random.normal(0, self.velocity_dispersion, (self.n_dm, 2))
+            dm_radius = np.abs(np.random.normal(self.disk_scale_length * 3, self.disk_scale_length, self.n_dm))
+            phi = np.random.uniform(0, 2 * np.pi, self.n_dm)
+            costheta = np.random.uniform(-1, 1, self.n_dm)
+            theta = np.arccos(costheta)
+            dm_x = dm_radius * np.sin(theta) * np.cos(phi)
+            dm_y = dm_radius * np.sin(theta) * np.sin(phi)
+            dm_z = dm_radius * np.cos(theta)
+            dm_pos = np.column_stack([dm_x, dm_y, dm_z])
+            dm_vel = np.random.normal(0, self.velocity_dispersion, (self.n_dm, 3))
             positions = np.vstack([positions, dm_pos])
             velocities = np.vstack([velocities, dm_vel])
             masses = np.concatenate([masses, np.ones(self.n_dm) * 5.0])
@@ -155,29 +162,36 @@ class Galaxy:
 
         return positions, velocities, masses, types
 
-    def _sample_exponential_disk(self, n, scale=None):
+    def _sample_exponential_disk_3d(self, n, scale=None, z_std=None):
         """
-        Sample positions and velocities for an exponential disk.
+        Sample positions and velocities for a 3D thin exponential disk.
+        z_std: standard deviation of z (vertical thickness)
         """
         if scale is None:
             scale = self.disk_scale_length
+        if z_std is None:
+            z_std = 0.1 * scale  # thin disk
+
         # Radial positions: exponential distribution
         r = np.random.exponential(scale, n)
         theta = np.random.uniform(0, 2 * np.pi, n)
         x = r * np.cos(theta)
         y = r * np.sin(theta)
-        pos = np.column_stack([x, y])
+        z = np.random.normal(0, z_std, n)
+        pos = np.column_stack([x, y, z])
 
-        # Set initial velocities (rotation + random)
+        # Set initial velocities (rotation in xy + vertical random)
         v_circ = self._rotation_curve(r)
-        vx = -v_circ * np.sin(theta) + np.random.normal(0, self.velocity_dispersion*0.1, n)
-        vy = v_circ * np.cos(theta) + np.random.normal(0, self.velocity_dispersion*0.1, n)
-        vel = np.column_stack([vx, vy])
+        vx = -v_circ * np.sin(theta) + np.random.normal(0, self.velocity_dispersion * 0.1, n)
+        vy = v_circ * np.cos(theta) + np.random.normal(0, self.velocity_dispersion * 0.1, n)
+        vz = np.random.normal(0, self.velocity_dispersion * 0.1, n)
+        vel = np.column_stack([vx, vy, vz])
         return pos, vel
 
-    def _apply_disk_rotation(self, positions, velocities, types):
+    def _apply_disk_rotation_3d(self, positions, velocities, types):
         """
-        Adjust velocities so that disk stars and gas rotate in the disk plane.
+        Adjust velocities so that disk stars and gas rotate in the disk plane (xy).
+        z-velocity is left unchanged.
         """
         is_disk = (types == "star") | (types == "gas")
         disk_positions = positions[is_disk]
@@ -190,6 +204,7 @@ class Galaxy:
         vy = v_circ * np.cos(theta)
         velocities[is_disk, 0] = vx
         velocities[is_disk, 1] = vy
+        # velocities[is_disk, 2] remains as initialized
 
     def _rotation_curve(self, r):
         """
