@@ -10,6 +10,7 @@ from galacticsim.visualization import (
     plot_density_map,
     plot_time_series,
     animate_galaxy,
+    plotly_galaxy_3d,  # <-- Import the 3D plotly function (assumed present)
 )
 from galacticsim.utils import (
     shift_to_center_of_mass_frame,
@@ -70,7 +71,7 @@ with st.sidebar:
     bulge_fraction = st.slider(
         "Bulge Fraction (Spiral)", 0.0, 0.5, float(params.get("bulge_fraction", 0.2)), step=0.01
     )
-    vel_disp_input = st.number_input(  # Renamed to avoid shadowing function!
+    vel_disp_input = st.number_input(
         "Velocity Dispersion (km/s)", 0.0, 300.0, float(params.get("velocity_dispersion", 60.0)), step=1.0
     )
     rotation_curve = st.selectbox(
@@ -117,7 +118,7 @@ if st.button("Generate Initial Galaxy", type="primary"):
         gas_fraction=gas_fraction,
         disk_scale_length=disk_scale_length,
         bulge_fraction=bulge_fraction,
-        velocity_dispersion=vel_disp_input,  # use the renamed variable
+        velocity_dispersion=vel_disp_input,
         rotation_curve=rotation_curve,
         seed=seed,
     )
@@ -141,6 +142,16 @@ if galaxy is not None:
         st.subheader("Density Map")
         fig2 = plot_density_map(galaxy.positions, title="Initial Density Map")
         st.pyplot(fig2)
+
+    # 3D Plot Tab Preview (optional)
+    st.expander("3D Interactive View", expanded=False).markdown(
+        "Try the 3D interactive plot below (drag to rotate):"
+    )
+    try:
+        fig3d = plotly_galaxy_3d(galaxy.positions, types=galaxy.types)
+        st.plotly_chart(fig3d, use_container_width=True)
+    except Exception as e:
+        st.info("3D plot unavailable. (Install plotly and ensure galacticsim.visualization.plotly_galaxy_3d exists.)")
 
     # Show parameter summary
     st.expander("Parameter Summary", expanded=False).markdown(
@@ -179,8 +190,8 @@ if st.button("Run Simulation", type="primary", disabled=(galaxy is None)):
 history = st.session_state.get("history", None)
 if history is not None:
     st.header("3️⃣ Simulation Results & Analysis")
-    tab1, tab2, tab3, tab4 = st.tabs(
-        ["Final State", "Evolution Animation", "Physical Plots", "Profiles/Diagnostics"]
+    tab1, tab2, tab3, tab4, tab5 = st.tabs(
+        ["Final State", "Evolution Animation", "Physical Plots", "Profiles/Diagnostics", "3D Galaxy View"]
     )
     with tab1:
         st.subheader("Final Galaxy State")
@@ -230,13 +241,20 @@ if history is not None:
         plt.close()
 
         st.subheader("Velocity Dispersion (Final State)")
-        # Use the imported function. If you want a scalar, take the norm:
         disp_vector = velocity_dispersion(history["velocities"][-1], types=galaxy.types, component="star")
         try:
             disp_scalar = float(np.linalg.norm(disp_vector))
         except Exception:
             disp_scalar = disp_vector
         st.write(f"Stellar velocity dispersion: {disp_scalar}")
+
+    with tab5:
+        st.subheader("3D Interactive Galaxy (Final Frame)")
+        try:
+            fig3d_final = plotly_galaxy_3d(history["positions"][-1], types=galaxy.types)
+            st.plotly_chart(fig3d_final, use_container_width=True)
+        except Exception as e:
+            st.info("3D plot unavailable. (Install plotly and ensure galacticsim.visualization.plotly_galaxy_3d exists.)")
 
     # Download results
     st.markdown("---")
