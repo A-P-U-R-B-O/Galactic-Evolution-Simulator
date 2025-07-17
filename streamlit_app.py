@@ -70,7 +70,7 @@ with st.sidebar:
     bulge_fraction = st.slider(
         "Bulge Fraction (Spiral)", 0.0, 0.5, float(params.get("bulge_fraction", 0.2)), step=0.01
     )
-    velocity_dispersion = st.number_input(
+    vel_disp_input = st.number_input(  # Renamed to avoid shadowing function!
         "Velocity Dispersion (km/s)", 0.0, 300.0, float(params.get("velocity_dispersion", 60.0)), step=1.0
     )
     rotation_curve = st.selectbox(
@@ -117,7 +117,7 @@ if st.button("Generate Initial Galaxy", type="primary"):
         gas_fraction=gas_fraction,
         disk_scale_length=disk_scale_length,
         bulge_fraction=bulge_fraction,
-        velocity_dispersion=velocity_dispersion,
+        velocity_dispersion=vel_disp_input,  # use the renamed variable
         rotation_curve=rotation_curve,
         seed=seed,
     )
@@ -155,7 +155,7 @@ if st.button("Run Simulation", type="primary", disabled=(galaxy is None)):
         softening=softening,
         integrate_method=integrate_method,
         star_formation=True,
-        star_formation_efficiency=star_formation_efficiency,  # <-- FIXED: pass to config
+        star_formation_efficiency=star_formation_efficiency,
         feedback=True,
         feedback_efficiency=feedback_strength,
         SFR_threshold=SFR_threshold,
@@ -230,8 +230,13 @@ if history is not None:
         plt.close()
 
         st.subheader("Velocity Dispersion (Final State)")
-        disp = velocity_dispersion(history["velocities"][-1], types=galaxy.types, component="star")
-        st.write(f"Stellar velocity dispersion: {disp}")
+        # Use the imported function. If you want a scalar, take the norm:
+        disp_vector = velocity_dispersion(history["velocities"][-1], types=galaxy.types, component="star")
+        try:
+            disp_scalar = float(np.linalg.norm(disp_vector))
+        except Exception:
+            disp_scalar = disp_vector
+        st.write(f"Stellar velocity dispersion: {disp_scalar}")
 
     # Download results
     st.markdown("---")
