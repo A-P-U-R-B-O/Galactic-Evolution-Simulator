@@ -1,5 +1,8 @@
 import numpy as np
 
+# Optional: Uncomment the next two lines if you install numba for speedup!
+# from numba import njit
+
 G = 4.302e-6  # Gravitational constant in kpc * (km/s)^2 / Msun
 
 class SimulationConfig:
@@ -11,7 +14,7 @@ class SimulationConfig:
         integrate_method="leapfrog",
         use_gpu=False,
         star_formation=True,
-        star_formation_efficiency=0.1,  # Added this parameter
+        star_formation_efficiency=0.1,
         feedback=True,
         feedback_efficiency=0.1,
         SFR_threshold=0.1,
@@ -25,7 +28,7 @@ class SimulationConfig:
         self.integrate_method = integrate_method
         self.use_gpu = use_gpu
         self.star_formation = star_formation
-        self.star_formation_efficiency = star_formation_efficiency  # Set attribute
+        self.star_formation_efficiency = star_formation_efficiency
         self.feedback = feedback
         self.feedback_efficiency = feedback_efficiency
         self.SFR_threshold = SFR_threshold
@@ -33,9 +36,12 @@ class SimulationConfig:
         self.cooling_rate = cooling_rate
         self.verbose = verbose
 
+# Optionally add @njit for big speedup if you have numba installed!
+# @njit
 def compute_accelerations(positions, masses, softening):
     """
     Compute gravitational acceleration for all particles using softening.
+    O(N^2) direct-sum.
     """
     N = positions.shape[0]
     acc = np.zeros_like(positions)
@@ -112,7 +118,8 @@ def run_simulation(
     gas_mass=None,
     gas_density=None,
     gas_temperature=None,
-    callback=None
+    callback=None,
+    progress_callback=None
 ):
     """
     Runs the full simulation with advanced features:
@@ -120,6 +127,10 @@ def run_simulation(
     - Star formation and feedback
     - ISM cooling
     - Energy tracking
+
+    Optional:
+    - callback: called each step with (step, positions, velocities, masses, star_mass, gas_mass, gas_density, gas_temperature)
+    - progress_callback: called with (step, steps) for UI progress (e.g. Streamlit st.progress)
     """
     positions = init_positions.copy()
     velocities = init_velocities.copy()
@@ -209,6 +220,10 @@ def run_simulation(
         # Optional callback for e.g. visualization or external logging
         if callback is not None:
             callback(step, positions, velocities, masses, star_mass, gas_mass, gas_density, gas_temperature)
+
+        # Progress bar support
+        if progress_callback is not None:
+            progress_callback(step, steps)
 
     # Convert lists to arrays
     for key in history:
