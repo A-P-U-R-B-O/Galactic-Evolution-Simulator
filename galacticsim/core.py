@@ -11,6 +11,7 @@ class SimulationConfig:
         integrate_method="leapfrog",
         use_gpu=False,
         star_formation=True,
+        star_formation_efficiency=0.1,  # Added this parameter
         feedback=True,
         feedback_efficiency=0.1,
         SFR_threshold=0.1,
@@ -24,6 +25,7 @@ class SimulationConfig:
         self.integrate_method = integrate_method
         self.use_gpu = use_gpu
         self.star_formation = star_formation
+        self.star_formation_efficiency = star_formation_efficiency  # Set attribute
         self.feedback = feedback
         self.feedback_efficiency = feedback_efficiency
         self.SFR_threshold = SFR_threshold
