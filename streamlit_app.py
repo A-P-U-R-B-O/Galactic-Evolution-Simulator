@@ -155,6 +155,7 @@ if st.button("Run Simulation", type="primary", disabled=(galaxy is None)):
         softening=softening,
         integrate_method=integrate_method,
         star_formation=True,
+        star_formation_efficiency=star_formation_efficiency,  # <-- FIXED: pass to config
         feedback=True,
         feedback_efficiency=feedback_strength,
         SFR_threshold=SFR_threshold,
