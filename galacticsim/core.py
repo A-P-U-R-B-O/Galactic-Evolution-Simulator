@@ -1,7 +1,13 @@
 import numpy as np
 
-# Optional: Uncomment the next two lines if you install numba for speedup!
-# from numba import njit
+# Numba acceleration: Uncomment this block if you want speedup!
+try:
+    from numba import njit
+    NUMBA_AVAILABLE = True
+except ImportError:
+    NUMBA_AVAILABLE = False
+    # Fallback: define dummy decorator
+    def njit(func): return func
 
 G = 4.302e-6  # Gravitational constant in kpc * (km/s)^2 / Msun
 
@@ -20,7 +26,8 @@ class SimulationConfig:
         SFR_threshold=0.1,
         cooling=True,
         cooling_rate=1e-3,
-        verbose=False
+        verbose=False,
+        use_numba=True  # NEW: toggle for numba acceleration
     ):
         self.steps = steps
         self.dt = dt
@@ -35,14 +42,53 @@ class SimulationConfig:
         self.cooling = cooling
         self.cooling_rate = cooling_rate
         self.verbose = verbose
+        self.use_numba = use_numba and NUMBA_AVAILABLE
 
-# Optionally add @njit for big speedup if you have numba installed!
-# @njit
+# --- Accelerated core routines ---
+@njit
+def compute_accelerations_numba(positions, masses, softening):
+    N = positions.shape[0]
+    acc = np.zeros_like(positions)
+    for i in range(N):
+        diff = positions - positions[i]
+        dist2 = np.sum(diff**2, axis=1) + softening**2
+        inv_dist3 = dist2 ** -1.5
+        inv_dist3[i] = 0  # ignore self-interaction
+        acc[i] = G * np.sum((diff.T * masses * inv_dist3).T, axis=0)
+    return acc
+
+@njit
+def leapfrog_step_numba(positions, velocities, masses, dt, softening):
+    acc = compute_accelerations_numba(positions, masses, softening)
+    velocities_half = velocities + 0.5 * acc * dt
+    positions_new = positions + velocities_half * dt
+    acc_new = compute_accelerations_numba(positions_new, masses, softening)
+    velocities_new = velocities_half + 0.5 * acc_new * dt
+    return positions_new, velocities_new
+
+@njit
+def euler_step_numba(positions, velocities, masses, dt, softening):
+    acc = compute_accelerations_numba(positions, masses, softening)
+    velocities_new = velocities + acc * dt
+    positions_new = positions + velocities_new * dt
+    return positions_new, velocities_new
+
+@njit
+def compute_kinetic_energy_numba(velocities, masses):
+    return 0.5 * np.sum(masses * np.sum(velocities**2, axis=1))
+
+@njit
+def compute_potential_energy_numba(positions, masses, softening):
+    N = positions.shape[0]
+    pot = 0.0
+    for i in range(N):
+        diff = positions[i] - positions[i+1:]
+        dist = np.sqrt(np.sum(diff**2, axis=1) + softening**2)
+        pot -= np.sum(G * masses[i] * masses[i+1:] / dist)
+    return pot
+
+# --- Original routines ---
 def compute_accelerations(positions, masses, softening):
-    """
-    Compute gravitational acceleration for all particles using softening.
-    O(N^2) direct-sum.
-    """
     N = positions.shape[0]
     acc = np.zeros_like(positions)
     for i in range(N):
@@ -54,9 +100,6 @@ def compute_accelerations(positions, masses, softening):
     return acc
 
 def leapfrog_step(positions, velocities, masses, dt, softening):
-    """
-    Leapfrog integrator (kick-drift-kick).
-    """
     acc = compute_accelerations(positions, masses, softening)
     velocities_half = velocities + 0.5 * acc * dt
     positions_new = positions + velocities_half * dt
@@ -70,38 +113,10 @@ def euler_step(positions, velocities, masses, dt, softening):
     positions_new = positions + velocities_new * dt
     return positions_new, velocities_new
 
-def star_formation(gas_mass, gas_density, threshold, efficiency, dt):
-    """
-    Simple Schmidt-Kennicutt law: SFR ∝ gas_density^1.4 if above threshold.
-    Returns mass of new stars formed.
-    """
-    if gas_density > threshold:
-        sfr = efficiency * gas_density ** 1.4
-        new_stars = sfr * dt
-        new_stars = min(new_stars, gas_mass)
-        return new_stars
-    return 0.0
-
-def apply_feedback(star_mass, feedback_efficiency):
-    """
-    Returns energy injected back into the ISM from young stars (e.g., supernovae).
-    """
-    feedback_energy = feedback_efficiency * star_mass  # toy model
-    return feedback_energy
-
-def apply_cooling(gas_temperature, cooling_rate, dt):
-    """
-    Simple exponential cooling.
-    """
-    return gas_temperature * np.exp(-cooling_rate * dt)
-
 def compute_kinetic_energy(velocities, masses):
     return 0.5 * np.sum(masses * np.sum(velocities**2, axis=1))
 
 def compute_potential_energy(positions, masses, softening):
-    """
-    Compute total potential energy (pairwise sum).
-    """
     N = positions.shape[0]
     pot = 0.0
     for i in range(N):
@@ -110,6 +125,23 @@ def compute_potential_energy(positions, masses, softening):
         pot -= np.sum(G * masses[i] * masses[i+1:] / dist)
     return pot
 
+# --- Physics routines ---
+def star_formation(gas_mass, gas_density, threshold, efficiency, dt):
+    if gas_density > threshold:
+        sfr = efficiency * gas_density ** 1.4
+        new_stars = sfr * dt
+        new_stars = min(new_stars, gas_mass)
+        return new_stars
+    return 0.0
+
+def apply_feedback(star_mass, feedback_efficiency):
+    feedback_energy = feedback_efficiency * star_mass  # toy model
+    return feedback_energy
+
+def apply_cooling(gas_temperature, cooling_rate, dt):
+    return gas_temperature * np.exp(-cooling_rate * dt)
+
+# --- Main simulation loop ---
 def run_simulation(
     init_positions,
     init_velocities,
@@ -162,14 +194,27 @@ def run_simulation(
     if gas_temperature is None:
         gas_temperature = 1e4  # K
 
+    # Choose acceleration routines if enabled
+    use_accel = getattr(config, "use_numba", False)
+    if use_accel:
+        _leapfrog = leapfrog_step_numba
+        _euler = euler_step_numba
+        _kinetic = compute_kinetic_energy_numba
+        _potential = compute_potential_energy_numba
+    else:
+        _leapfrog = leapfrog_step
+        _euler = euler_step
+        _kinetic = compute_kinetic_energy
+        _potential = compute_potential_energy
+
     for step in range(steps):
         # Integrate positions and velocities
         if config.integrate_method == "leapfrog":
-            positions, velocities = leapfrog_step(
+            positions, velocities = _leapfrog(
                 positions, velocities, masses, dt, config.softening
             )
         else:
-            positions, velocities = euler_step(
+            positions, velocities = _euler(
                 positions, velocities, masses, dt, config.softening
             )
 
@@ -196,8 +241,8 @@ def run_simulation(
         gas_density = gas_mass / (np.pi * (np.max(np.linalg.norm(positions, axis=1))**2))
 
         # Energies
-        kinetic = compute_kinetic_energy(velocities, masses)
-        potential = compute_potential_energy(positions, masses, config.softening)
+        kinetic = _kinetic(velocities, masses)
+        potential = _potential(positions, masses, config.softening)
 
         # Save history
         history["positions"].append(positions.copy())
