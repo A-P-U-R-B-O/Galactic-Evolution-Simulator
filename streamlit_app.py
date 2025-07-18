@@ -101,6 +101,13 @@ with st.sidebar:
     )
     verbose = st.checkbox("Verbose Output (console/log)", value=False)
 
+    # --- NEW: Numba toggle ---
+    use_numba = st.checkbox(
+        "Numba Acceleration (Fast N-body, requires Numba installed)",
+        value=True,
+        help="Enable accelerated simulation with Numba (recommended)."
+    )
+
     st.markdown("----")
     st.markdown("**Tip:** Use a preset as a starting point, then customize parameters.")
 
@@ -173,6 +180,7 @@ if st.button("Run Simulation", type="primary", disabled=(galaxy is None)):
         cooling=True,
         cooling_rate=cooling_rate,
         verbose=verbose,
+        use_numba=use_numba,  # <-- Pass numba toggle to config!
     )
     # Run the simulation
     history = run_simulation(
