@@ -4,3 +4,4 @@ streamlit>=1.18
 plotly>=5.0
 pytest>=6.0
 jupyter
+numba>=0.56
