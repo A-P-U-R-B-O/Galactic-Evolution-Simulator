@@ -34,39 +34,69 @@ class Galaxy:
             seed: (Optional) Random seed for reproducibility
             custom_init: (Optional) Function to initialize custom galaxies
         """
-        self.num_particles = num_particles
+        self.num_particles = int(num_particles)
         self.galaxy_type = galaxy_type
-        self.dark_matter_fraction = dark_matter_fraction
-        self.gas_fraction = gas_fraction
-        self.disk_scale_length = disk_scale_length
-        self.bulge_fraction = bulge_fraction
-        self.velocity_dispersion = velocity_dispersion
+        self.dark_matter_fraction = float(dark_matter_fraction)
+        self.gas_fraction = float(gas_fraction)
+        self.disk_scale_length = float(disk_scale_length)
+        self.bulge_fraction = float(bulge_fraction)
+        self.velocity_dispersion = float(velocity_dispersion)
         self.rotation_curve = rotation_curve
         self.seed = seed
         self.custom_init = custom_init
 
-        # Set random seed for reproducibility
-        if seed is not None:
-            np.random.seed(seed)
+        # Validate fractions
+        for frac_name, frac_val in [
+            ("dark_matter_fraction", self.dark_matter_fraction),
+            ("gas_fraction", self.gas_fraction),
+            ("bulge_fraction", self.bulge_fraction),
+        ]:
+            if not (0.0 <= frac_val <= 1.0):
+                raise ValueError(f"{frac_name} must be between 0 and 1. Got {frac_val}.")
 
-        # Compute number of each component
-        self.n_stars = int(num_particles * (1 - dark_matter_fraction - gas_fraction))
-        self.n_gas = int(num_particles * gas_fraction)
-        self.n_dm = num_particles - self.n_stars - self.n_gas
+        total_fraction = self.dark_matter_fraction + self.gas_fraction
+        if total_fraction > 1.0:
+            raise ValueError(
+                f"Sum of dark_matter_fraction ({self.dark_matter_fraction}) and gas_fraction ({self.gas_fraction}) exceeds 1. "
+                "There must be some stellar mass (stars = 1 - dark_matter_fraction - gas_fraction)."
+            )
+
+        # Set random seed for reproducibility
+        if self.seed is not None:
+            np.random.seed(self.seed)
+
+        # Compute number of each component and ensure non-negative, integer values
+        n_stars_raw = self.num_particles * (1 - self.dark_matter_fraction - self.gas_fraction)
+        self.n_stars = max(int(round(n_stars_raw)), 0)
+        n_gas_raw = self.num_particles * self.gas_fraction
+        self.n_gas = max(int(round(n_gas_raw)), 0)
+        self.n_dm = max(self.num_particles - self.n_stars - self.n_gas, 0)
+
+        if self.n_stars + self.n_gas + self.n_dm != self.num_particles:
+            # Fix rounding mismatches by adding/subtracting from DM
+            diff = self.num_particles - (self.n_stars + self.n_gas + self.n_dm)
+            self.n_dm = max(self.n_dm + diff, 0)
 
         # Initialize particles
-        if custom_init is not None:
-            self.positions, self.velocities, self.masses, self.types = custom_init(self)
-        elif galaxy_type == "Spiral":
+        if self.custom_init is not None:
+            self.positions, self.velocities, self.masses, self.types = self.custom_init(self)
+        elif self.galaxy_type == "Spiral":
             self.positions, self.velocities, self.masses, self.types = self._init_spiral()
-        elif galaxy_type == "Elliptical":
+        elif self.galaxy_type == "Elliptical":
             self.positions, self.velocities, self.masses, self.types = self._init_elliptical()
         else:
-            raise ValueError(f"Unsupported galaxy_type: {galaxy_type}")
+            raise ValueError(f"Unsupported galaxy_type: {self.galaxy_type}")
 
         # ISM properties (toy model)
-        self.gas_mass = np.sum(self.masses[self.types == "gas"]) if self.n_gas > 0 else 0.0
-        self.gas_density = self.gas_mass / (4 / 3 * np.pi * (np.max(np.linalg.norm(self.positions, axis=1)) ** 3))
+        if np.any(self.types == "gas"):
+            self.gas_mass = np.sum(self.masses[self.types == "gas"])
+        else:
+            self.gas_mass = 0.0
+        pos_norm = np.linalg.norm(self.positions, axis=1)
+        if pos_norm.size > 0:
+            self.gas_density = self.gas_mass / (4 / 3 * np.pi * (np.max(pos_norm) ** 3))
+        else:
+            self.gas_density = 0.0
         self.gas_temperature = 1e4  # Kelvin
 
     def _init_spiral(self):
@@ -77,25 +107,32 @@ class Galaxy:
         types = []
 
         # Disk stars (thin disk, z ~ Gaussian)
-        n_disk = int(self.n_stars * (1 - self.bulge_fraction))
-        disk_pos, disk_vel = self._sample_exponential_disk_3d(n_disk, z_std=0.1 * self.disk_scale_length)
-        positions.append(disk_pos)
-        velocities.append(disk_vel)
-        masses.append(np.ones(n_disk))
-        types += ["star"] * n_disk
+        n_disk_raw = self.n_stars * (1 - self.bulge_fraction)
+        n_disk = max(int(round(n_disk_raw)), 0)
+        if n_disk > 0:
+            disk_pos, disk_vel = self._sample_exponential_disk_3d(n_disk, z_std=0.1 * self.disk_scale_length)
+            positions.append(disk_pos)
+            velocities.append(disk_vel)
+            masses.append(np.ones(n_disk))
+            types += ["star"] * n_disk
 
         # Bulge stars (spherical)
         n_bulge = self.n_stars - n_disk
-        bulge_pos = np.random.normal(0, self.disk_scale_length * 0.3, (n_bulge, 3))
-        bulge_vel = np.random.normal(0, self.velocity_dispersion, (n_bulge, 3))
-        positions.append(bulge_pos)
-        velocities.append(bulge_vel)
-        masses.append(np.ones(n_bulge))
-        types += ["star"] * n_bulge
+        if n_bulge > 0:
+            bulge_pos = np.random.normal(0, self.disk_scale_length * 0.3, (n_bulge, 3))
+            bulge_vel = np.random.normal(0, self.velocity_dispersion, (n_bulge, 3))
+            positions.append(bulge_pos)
+            velocities.append(bulge_vel)
+            masses.append(np.ones(n_bulge))
+            types += ["star"] * n_bulge
 
         # Gas particles (disk, thin)
         if self.n_gas > 0:
-            gas_pos, gas_vel = self._sample_exponential_disk_3d(self.n_gas, scale=1.2 * self.disk_scale_length, z_std=0.15 * self.disk_scale_length)
+            gas_pos, gas_vel = self._sample_exponential_disk_3d(
+                self.n_gas,
+                scale=1.2 * self.disk_scale_length,
+                z_std=0.15 * self.disk_scale_length,
+            )
             positions.append(gas_pos)
             velocities.append(gas_vel)
             masses.append(np.full(self.n_gas, 0.5))  # Each gas cloud is less massive
@@ -117,6 +154,14 @@ class Galaxy:
             masses.append(np.ones(self.n_dm) * 5.0)  # DM particles are more massive
             types += ["dm"] * self.n_dm
 
+        # If all lists are empty, return empty arrays
+        if len(positions) == 0:
+            positions = np.empty((0, 3))
+            velocities = np.empty((0, 3))
+            masses = np.array([])
+            types = np.array([], dtype=str)
+            return positions, velocities, masses, types
+
         # Stack arrays
         positions = np.vstack(positions)
         velocities = np.vstack(velocities)
@@ -130,19 +175,27 @@ class Galaxy:
 
     def _init_elliptical(self):
         """Elliptical galaxy: single spheroidal distribution, no disk. Now 3D."""
-        positions = np.random.normal(0, self.disk_scale_length, (self.n_stars, 3))
-        velocities = np.random.normal(0, self.velocity_dispersion, (self.n_stars, 3))
-        masses = np.ones(self.n_stars)
-        types = np.array(["star"] * self.n_stars)
+        positions = []
+        velocities = []
+        masses = []
+        types = []
+
+        if self.n_stars > 0:
+            star_pos = np.random.normal(0, self.disk_scale_length, (self.n_stars, 3))
+            star_vel = np.random.normal(0, self.velocity_dispersion, (self.n_stars, 3))
+            positions.append(star_pos)
+            velocities.append(star_vel)
+            masses.append(np.ones(self.n_stars))
+            types += ["star"] * self.n_stars
 
         # Gas (if present)
         if self.n_gas > 0:
             gas_pos = np.random.normal(0, self.disk_scale_length, (self.n_gas, 3))
             gas_vel = np.random.normal(0, self.velocity_dispersion, (self.n_gas, 3))
-            positions = np.vstack([positions, gas_pos])
-            velocities = np.vstack([velocities, gas_vel])
-            masses = np.concatenate([masses, np.full(self.n_gas, 0.5)])
-            types = np.concatenate([types, np.array(["gas"] * self.n_gas)])
+            positions.append(gas_pos)
+            velocities.append(gas_vel)
+            masses.append(np.full(self.n_gas, 0.5))
+            types += ["gas"] * self.n_gas
 
         # Dark matter halo (if present)
         if self.n_dm > 0:
@@ -155,10 +208,24 @@ class Galaxy:
             dm_z = dm_radius * np.cos(theta)
             dm_pos = np.column_stack([dm_x, dm_y, dm_z])
             dm_vel = np.random.normal(0, self.velocity_dispersion, (self.n_dm, 3))
-            positions = np.vstack([positions, dm_pos])
-            velocities = np.vstack([velocities, dm_vel])
-            masses = np.concatenate([masses, np.ones(self.n_dm) * 5.0])
-            types = np.concatenate([types, np.array(["dm"] * self.n_dm)])
+            positions.append(dm_pos)
+            velocities.append(dm_vel)
+            masses.append(np.ones(self.n_dm) * 5.0)
+            types += ["dm"] * self.n_dm
+
+        # If all lists are empty, return empty arrays
+        if len(positions) == 0:
+            positions = np.empty((0, 3))
+            velocities = np.empty((0, 3))
+            masses = np.array([])
+            types = np.array([], dtype=str)
+            return positions, velocities, masses, types
+
+        # Stack arrays
+        positions = np.vstack(positions)
+        velocities = np.vstack(velocities)
+        masses = np.concatenate(masses)
+        types = np.array(types)
 
         return positions, velocities, masses, types
 
@@ -167,6 +234,10 @@ class Galaxy:
         Sample positions and velocities for a 3D thin exponential disk.
         z_std: standard deviation of z (vertical thickness)
         """
+        n = max(int(round(n)), 0)
+        if n <= 0:
+            # Return empty arrays if no particles requested
+            return np.empty((0, 3)), np.empty((0, 3))
         if scale is None:
             scale = self.disk_scale_length
         if z_std is None:
@@ -194,6 +265,8 @@ class Galaxy:
         z-velocity is left unchanged.
         """
         is_disk = (types == "star") | (types == "gas")
+        if np.sum(is_disk) == 0:
+            return
         disk_positions = positions[is_disk]
         x = disk_positions[:, 0]
         y = disk_positions[:, 1]
@@ -204,18 +277,4 @@ class Galaxy:
         vy = v_circ * np.cos(theta)
         velocities[is_disk, 0] = vx
         velocities[is_disk, 1] = vy
-        # velocities[is_disk, 2] remains as initialized
-
-    def _rotation_curve(self, r):
-        """
-        Calculate rotation curve at radius r.
-        """
-        if self.rotation_curve == "flat":
-            v0 = 220.0  # km/s
-            return np.ones_like(r) * v0
-        elif self.rotation_curve == "keplerian":
-            v0 = 220.0
-            r0 = self.disk_scale_length
-            return v0 * np.sqrt(r0 / np.maximum(r, 0.1))
-        else:
-            raise ValueError(f"Unknown rotation_curve: {self.rotation_curve}")
+        # velocities[is_disk, 2] remains
